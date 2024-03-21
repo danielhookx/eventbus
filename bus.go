@@ -23,17 +23,34 @@ type BusSubscriber interface {
 	Unsubscribe(topic string, handler interface{}) error
 }
 
+type BusPublisher interface {
+	Publish(topic string, args ...interface{})
+}
+
+type Eventbus interface {
+	BusSubscriber
+	BusPublisher
+}
+
 type EventBus struct {
 	cm *fission.CenterManager
 	dm *fission.DistributorManager
 }
 
-func NewEventBus() *EventBus {
-	e := &EventBus{
+func NewEventBus(opt ...EventbusOption) Eventbus {
+	opts := eventbusOptions{}
+	for _, o := range opt {
+		o.apply(&opts)
+	}
+	var bus Eventbus
+	bus = &EventBus{
 		cm: fission.NewCenterManager(),
 		dm: fission.NewDistributorManager(),
 	}
-	return e
+	for _, proxyCreator := range opts.proxyCreators {
+		bus = proxyCreator(bus)
+	}
+	return bus
 }
 
 func (bus *EventBus) CreateEventBusSyncDist(ctx context.Context, key any) fission.Distribution {
