@@ -64,7 +64,7 @@ func (bus *EventBus) CreateEventBusAsyncDist(ctx context.Context, key any) fissi
 }
 
 // Wrapper function that transforms a function into a comparable interface.
-func functionWrapper(f interface{}) interface{} {
+func functionWrapper(f interface{}) uintptr {
 	return reflect.ValueOf(f).Pointer()
 }
 
@@ -94,12 +94,17 @@ func (bus *EventBus) SubscribeSync(topic string, fn interface{}) error {
 
 func (bus *EventBus) Unsubscribe(topic string, handler interface{}) error {
 	fnType := reflect.TypeOf(handler)
-	if !(fnType.Kind() == reflect.Func) {
-		return fmt.Errorf("%s is not of type reflect.Func", fnType.Kind())
+	if fnType.Kind() == reflect.Func {
+		r := bus.cm.PutCenter(topic)
+		r.DelDistributor(functionWrapper(handler))
+		return nil
 	}
-	r := bus.cm.PutCenter(topic)
-	r.DelDistributor(functionWrapper(handler))
-	return nil
+	if fnType.Kind() == reflect.Uintptr {
+		r := bus.cm.PutCenter(topic)
+		r.DelDistributor(handler)
+		return nil
+	}
+	return fmt.Errorf("Unsubscribe invalid handler type %s", fnType.Kind())
 }
 
 func (bus *EventBus) Publish(topic string, args ...interface{}) {
