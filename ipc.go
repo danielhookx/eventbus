@@ -1,14 +1,12 @@
 package eventbus
 
 import (
+	"encoding/gob"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"net/url"
-
-	"github.com/google/uuid"
 )
 
 type SubArgs struct {
@@ -28,7 +26,6 @@ type PubReply struct {
 }
 
 type RPCProxy struct {
-	id        string
 	rawURL    string
 	remoteURL string
 	bus       Eventbus
@@ -36,48 +33,47 @@ type RPCProxy struct {
 
 func NewRPCProxyCreator(rawURL, remoteURL string) ProxyCreator {
 	return func(bus Eventbus) Eventbus {
-		return NewRPCProxy(rawURL, remoteURL, bus)
+		b, err := NewRPCProxy(rawURL, remoteURL, bus)
+		if err != nil {
+			panic(err)
+		}
+		return b
 	}
 }
 
-func NewRPCProxy(rawURL, remoteURL string, bus Eventbus) *RPCProxy {
+func NewRPCProxy(rawURL, remoteURL string, bus Eventbus) (*RPCProxy, error) {
 	p := &RPCProxy{
-		id:        uuid.New().String(),
 		rawURL:    rawURL,
 		remoteURL: remoteURL,
 		bus:       bus,
 	}
+	gob.Register([]interface{}{})
 	rpc.Register(p)
 	// Registers an HTTP handler for RPC messages
 	rpc.HandleHTTP()
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		log.Fatal("parse url error: ", err)
+		return nil, err
 	}
 
 	listener, err := net.Listen(u.Scheme, fmt.Sprintf(":%s", u.Port()))
 	if err != nil {
-		log.Fatal("Listener error: ", err)
+		return nil, err
 	}
-	// Serve accepts incoming HTTP connections on the listener l, creating
-	// a new service goroutine for each. The service goroutines read requests
-	// and then call handler to reply to them
 	go http.Serve(listener, nil)
-	return p
+	return p, nil
 }
 
 func (p *RPCProxy) Subscribe(topic string, fn interface{}) error {
-	// DialHTTP connects to an HTTP RPC server at the specified network
+	// Call the remote subscription method to register the event to the remote endpoint.
 	remote, err := url.Parse(p.remoteURL)
 	if err != nil {
-		log.Fatal("parse url error: ", err)
-		return err
+		return fmt.Errorf("Parse remote url error: %w", err)
 	}
 	client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
 	if err != nil {
-		log.Fatal("Client connection error: ", err)
-		return err
+		return fmt.Errorf("Client connection error %w", err)
 	}
 
 	reply := &SubReply{}
@@ -86,18 +82,56 @@ func (p *RPCProxy) Subscribe(topic string, fn interface{}) error {
 		Topic:     topic,
 	}, &reply)
 	if err != nil {
-		log.Fatal("Client invocation error: ", err)
-		return err
+		return fmt.Errorf("Client invocation error: %w", err)
 	}
+	// Call the local subscription method and register the callback locally
 	return p.bus.Subscribe(topic, fn)
 }
 
 func (p *RPCProxy) SubscribeSync(topic string, fn interface{}) error {
-	return nil
+	// Call the remote subscription method to register the event to the remote endpoint.
+	remote, err := url.Parse(p.remoteURL)
+	if err != nil {
+		return fmt.Errorf("Parse remote url error: %w", err)
+	}
+	client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
+	if err != nil {
+		return fmt.Errorf("Client connection error %w", err)
+	}
+
+	reply := &SubReply{}
+	err = client.Call("RPCProxy.RPCSubscribeSync", &SubArgs{
+		RemoteURL: p.rawURL,
+		Topic:     topic,
+	}, &reply)
+	if err != nil {
+		return fmt.Errorf("Client invocation error: %w", err)
+	}
+	// Call the local subscription method and register the callback locally
+	return p.bus.SubscribeSync(topic, fn)
 }
 
 func (p *RPCProxy) Unsubscribe(topic string, handler interface{}) error {
-	return nil
+	// Call the remote subscription method to register the event to the remote endpoint.
+	remote, err := url.Parse(p.remoteURL)
+	if err != nil {
+		return fmt.Errorf("Parse remote url error: %w", err)
+	}
+	client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
+	if err != nil {
+		return fmt.Errorf("Client connection error %w", err)
+	}
+
+	reply := &SubReply{}
+	err = client.Call("RPCProxy.RPCSubscribeSync", &SubArgs{
+		RemoteURL: p.rawURL,
+		Topic:     topic,
+	}, &reply)
+	if err != nil {
+		return fmt.Errorf("Client invocation error: %w", err)
+	}
+	// Call the local subscription method and register the callback locally
+	return p.bus.Unsubscribe(topic, handler)
 }
 
 func (p *RPCProxy) Publish(topic string, args ...interface{}) {
@@ -105,16 +139,46 @@ func (p *RPCProxy) Publish(topic string, args ...interface{}) {
 }
 
 func (p *RPCProxy) RPCSubscribe(args *SubArgs, reply *SubReply) error {
-	p.bus.Subscribe(args.Topic, func(data any) error {
+	// Receive subscription method calls from the peer
+	// callback method actually executes the remote call of Publish
+	cb := p.doSubscribeCallback(args, reply)
+	p.bus.Subscribe(args.Topic, cb)
+	return nil
+}
+
+func (p *RPCProxy) RPCSubscribeSync(args *SubArgs, reply *SubReply) error {
+	// Receive subscription method calls from the peer
+	// callback method actually executes the remote call of Publish
+	cb := p.doSubscribeCallback(args, reply)
+	p.bus.SubscribeSync(args.Topic, cb)
+	return nil
+}
+
+func (p *RPCProxy) RPCUnsubscribe(args *SubArgs, reply *SubReply) error {
+	// Receive subscription method calls from the peer
+	// callback method actually executes the remote call of Publish
+	cb := p.doSubscribeCallback(args, reply)
+	p.bus.Unsubscribe(args.Topic, cb)
+	return nil
+}
+
+func (p *RPCProxy) RPCPublish(args *PubArgs, reply *PubReply) error {
+	params := args.Data.([]interface{})
+	p.bus.Publish(args.Topic, params...)
+	return nil
+}
+
+type subscribeCallback func(data any) error
+
+func (p *RPCProxy) doSubscribeCallback(args *SubArgs, reply *SubReply) subscribeCallback {
+	return func(data any) error {
 		remote, err := url.Parse(args.RemoteURL)
 		if err != nil {
-			log.Fatal("parse url error: ", err)
-			return err
+			return fmt.Errorf("Parse remote url error: %w", err)
 		}
 		client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
 		if err != nil {
-			log.Fatal("Client connection error: ", err)
-			return err
+			return fmt.Errorf("Client connection error %w", err)
 		}
 
 		reply := &PubReply{}
@@ -123,15 +187,8 @@ func (p *RPCProxy) RPCSubscribe(args *SubArgs, reply *SubReply) error {
 			Data:  data,
 		}, &reply)
 		if err != nil {
-			log.Fatal("Client invocation error: ", err)
-			return err
+			return fmt.Errorf("Client invocation error: %w", err)
 		}
 		return nil
-	})
-	return nil
-}
-
-func (p *RPCProxy) RPCPublish(args *PubArgs, reply *PubReply) error {
-	p.bus.Publish(args.Topic, args.Data)
-	return nil
+	}
 }
