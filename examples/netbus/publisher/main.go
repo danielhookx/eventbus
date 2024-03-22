@@ -16,20 +16,40 @@ func main() {
 	bus := eventbus.NewEventBus(eventbus.WithProxys(eventbus.NewRPCProxyCreator(rawURL, remoteURL)))
 
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("please input...")
+	fmt.Println("Note: All input ends with `Enter`, type `exit` return to upper level")
+
+	topic := "test"
 
 	for {
+		fmt.Println("Input topic:")
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("input with error", err)
 			return
 		}
-
-		if input == "\n" {
+		input = strings.TrimRight(input, "\n")
+		if input == "exit" {
 			break
 		}
-		fmt.Println("your input is:", input)
-		bus.Publish("test-hello", strings.TrimRight(input, "\n"))
+		topic = input
+		if topic == "" {
+			fmt.Println("topic can not be empty")
+			continue
+		}
+		fmt.Printf("topic is: %s\n", topic)
+		for {
+			fmt.Println("Input text content:")
+			input, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Println("input with error", err)
+				return
+			}
+			input = strings.TrimRight(input, "\n")
+			if input == "exit" {
+				break
+			}
+			bus.Publish(topic, input)
+		}
 	}
 	fmt.Println("exit")
 }
