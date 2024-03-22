@@ -66,7 +66,7 @@ func main() {
 
 			command, err := strconv.Atoi(commandTypeStr)
 			if err != nil {
-				fmt.Println("unsupported command type %v", commandTypeStr)
+				fmt.Printf("unsupported command type %v\n", commandTypeStr)
 				continue
 			}
 
@@ -83,7 +83,7 @@ func main() {
 
 			method, err := strconv.Atoi(methodStr)
 			if err != nil {
-				fmt.Println("unsupported method type %v", methodStr)
+				fmt.Printf("unsupported method type %v\n", methodStr)
 				continue
 			}
 
