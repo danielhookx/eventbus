@@ -3,8 +3,8 @@ package eventbus
 import (
 	"encoding/gob"
 	"fmt"
+	"log"
 	"net"
-	"net/http"
 	"net/rpc"
 	"net/url"
 	"sync"
@@ -63,18 +63,28 @@ func NewRPCProxy(rawURL, remoteURL string, bus Eventbus) (*RPCProxy, error) {
 	gob.Register([]interface{}{})
 	rpc.Register(p)
 	// Registers an HTTP handler for RPC messages
-	rpc.HandleHTTP()
+	// rpc.HandleHTTP()
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
 
-	listener, err := net.Listen(u.Scheme, fmt.Sprintf(":%s", u.Port()))
+	listener, err := net.Listen(u.Scheme, parseAddress(u))
 	if err != nil {
 		return nil, err
 	}
-	go http.Serve(listener, nil)
+	// start http server goroutine
+	// go http.Serve(listener, nil)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Fatal("Accept error:", err)
+			}
+			go rpc.ServeConn(conn)
+		}
+	}()
 	return p, nil
 }
 
@@ -84,7 +94,7 @@ func (p *RPCProxy) Subscribe(topic string, fn interface{}) error {
 	if err != nil {
 		return fmt.Errorf("Parse remote url error: %w", err)
 	}
-	client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
+	client, err := rpc.Dial(remote.Scheme, parseAddress(remote))
 	if err != nil {
 		return fmt.Errorf("Client connection error %w", err)
 	}
@@ -110,7 +120,7 @@ func (p *RPCProxy) SubscribeSync(topic string, fn interface{}) error {
 	if err != nil {
 		return fmt.Errorf("Parse remote url error: %w", err)
 	}
-	client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
+	client, err := rpc.Dial(remote.Scheme, parseAddress(remote))
 	if err != nil {
 		return fmt.Errorf("Client connection error %w", err)
 	}
@@ -140,7 +150,7 @@ func (p *RPCProxy) Unsubscribe(topic string, handler interface{}) error {
 	if err != nil {
 		return fmt.Errorf("Parse remote url error: %w", err)
 	}
-	client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
+	client, err := rpc.Dial(remote.Scheme, parseAddress(remote))
 	if err != nil {
 		return fmt.Errorf("Client connection error %w", err)
 	}
@@ -201,7 +211,7 @@ func (p *RPCProxy) doSubscribeCallback(args *SubArgs) subscribeCallback {
 		if err != nil {
 			return fmt.Errorf("Parse remote url error: %w", err)
 		}
-		client, err := rpc.DialHTTP(remote.Scheme, remote.Host)
+		client, err := rpc.Dial(remote.Scheme, parseAddress(remote))
 		if err != nil {
 			return fmt.Errorf("Client connection error %w", err)
 		}
@@ -216,4 +226,11 @@ func (p *RPCProxy) doSubscribeCallback(args *SubArgs) subscribeCallback {
 		}
 		return nil
 	}
+}
+
+func parseAddress(u *url.URL) string {
+	if u.Scheme == "unix" {
+		return u.Path
+	}
+	return u.Host
 }
