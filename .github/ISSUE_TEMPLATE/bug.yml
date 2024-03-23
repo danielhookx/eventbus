@@ -1,0 +1,35 @@
+---
+name: Bug Report
+description: File a bug report
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve! 🙏 Please answer these questions and provide as much information as possible about your problem.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Describe the unexpected behavior or performance regression you are observing.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the expected behavior or performance characteristics.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Host environment
+      description: |-
+        Specify any relevant details about the host environment the program was running in,
+        such as operating system, CPU architecture, go env, container runtime, etc.
+    validations:
+      required: false
