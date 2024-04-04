@@ -8,6 +8,8 @@ import (
 	"net/rpc"
 	"net/url"
 	"sync"
+
+	"github.com/danielhookx/fission"
 )
 
 type SubArgs struct {
@@ -140,6 +142,10 @@ func (p *RPCProxy) SubscribeSync(topic string, fn interface{}) error {
 	return p.bus.SubscribeSync(topic, fn)
 }
 
+func (p *RPCProxy) SubscribeWith(topic string, key any, fn any, distHandler fission.CreateDistributionHandleFunc) error {
+	return p.bus.SubscribeWith(topic, key, fn, distHandler)
+}
+
 func (p *RPCProxy) Unsubscribe(topic string, handler interface{}) error {
 	p.Lock()
 	handle := p.local2Remote[functionWrapper(handler)]
@@ -180,7 +186,7 @@ func (p *RPCProxy) RPCSubscribe(args *SubArgs, reply *SubReply) error {
 	// callback method actually executes the remote call of Publish
 	cb := p.doSubscribeCallback(args)
 	reply.Handle = functionWrapper(cb)
-	return p.bus.Subscribe(args.Topic, cb)
+	return p.bus.SubscribeWith(args.Topic, reply.Handle, cb, CreateEventBusAsyncDist)
 }
 
 func (p *RPCProxy) RPCSubscribeSync(args *SubArgs, reply *SubReply) error {
@@ -188,7 +194,7 @@ func (p *RPCProxy) RPCSubscribeSync(args *SubArgs, reply *SubReply) error {
 	// callback method actually executes the remote call of Publish
 	cb := p.doSubscribeCallback(args)
 	reply.Handle = functionWrapper(cb)
-	p.bus.SubscribeSync(args.Topic, cb)
+	p.bus.SubscribeWith(args.Topic, reply.Handle, cb, CreateEventBusAsyncDist)
 	return nil
 }
 

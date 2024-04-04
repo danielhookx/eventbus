@@ -99,7 +99,7 @@ func main() {
 			case 1:
 				bus.Subscribe(topic, fn)
 			case 2:
-				bus.Subscribe(topic, fn)
+				bus.SubscribeSync(topic, fn)
 			case 3:
 				bus.Unsubscribe(topic, fn)
 			}

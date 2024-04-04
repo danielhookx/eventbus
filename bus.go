@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/danielhookx/fission"
 )
@@ -21,6 +22,7 @@ type BusSubscriber interface {
 	Subscribe(topic string, fn interface{}) error
 	SubscribeSync(topic string, fn interface{}) error
 	Unsubscribe(topic string, handler interface{}) error
+	SubscribeWith(topic string, key any, fn any, distHandler fission.CreateDistributionHandleFunc) error
 }
 
 type BusPublisher interface {
@@ -53,14 +55,18 @@ func NewEventBus(opt ...EventbusOption) Eventbus {
 	return bus
 }
 
-func (bus *EventBus) CreateEventBusSyncDist(ctx context.Context, key any) fission.Distribution {
+func CreateEventBusSyncDist(ctx context.Context, key any) fission.Distribution {
 	fn := FromCtx(ctx)
 	return NewSyncDistribution(fn)
 }
 
-func (bus *EventBus) CreateEventBusAsyncDist(ctx context.Context, key any) fission.Distribution {
+func CreateEventBusAsyncDist(ctx context.Context, key any) fission.Distribution {
 	fn := FromCtx(ctx)
 	return NewAsyncDistribution(fn)
+}
+
+func CreateEventBusRepeatDist(ctx context.Context, key any) fission.Distribution {
+	return NewRepeatDistribution()
 }
 
 // Wrapper function that transforms a function into a comparable interface.
@@ -74,9 +80,13 @@ func (bus *EventBus) Subscribe(topic string, fn interface{}) error {
 		return fmt.Errorf("%s is not of type reflect.Func", fnType.Kind())
 	}
 
+	handler := reflect.ValueOf(fn)
+	key := functionWrapper(fn)
 	r := bus.cm.PutCenter(topic)
-	p := bus.dm.PutDistributor(Func(reflect.ValueOf(fn)), functionWrapper(fn), bus.CreateEventBusAsyncDist)
-	r.AddDistributor(p)
+	p := bus.dm.PutDistributor(Func(handler), key, CreateEventBusRepeatDist)
+	rd := p.(*RepeatDistribution)
+	rd.Add(NewAsyncDistribution(reflect.ValueOf(fn)))
+	r.AddDistributor(key, p)
 	return nil
 }
 
@@ -86,9 +96,29 @@ func (bus *EventBus) SubscribeSync(topic string, fn interface{}) error {
 		return fmt.Errorf("%s is not of type reflect.Func", fnType.Kind())
 	}
 
+	handler := reflect.ValueOf(fn)
+	key := functionWrapper(fn)
 	r := bus.cm.PutCenter(topic)
-	p := bus.dm.PutDistributor(Func(reflect.ValueOf(fn)), functionWrapper(fn), bus.CreateEventBusSyncDist)
-	r.AddDistributor(p)
+	p := bus.dm.PutDistributor(Func(handler), key, CreateEventBusRepeatDist)
+	rd := p.(*RepeatDistribution)
+	rd.Add(NewSyncDistribution(reflect.ValueOf(fn)))
+	r.AddDistributor(key, p)
+	return nil
+}
+
+func (bus *EventBus) SubscribeWith(topic string, key any, fn any, distHandler fission.CreateDistributionHandleFunc) error {
+	fnType := reflect.TypeOf(fn)
+	if !(fnType.Kind() == reflect.Func) {
+		return fmt.Errorf("%s is not of type reflect.Func", fnType.Kind())
+	}
+
+	if key == nil {
+		return fmt.Errorf("key is nil")
+	}
+
+	r := bus.cm.PutCenter(topic)
+	p := bus.dm.PutDistributor(Func(reflect.ValueOf(fn)), key, distHandler)
+	r.AddDistributor(key, p)
 	return nil
 }
 
@@ -152,6 +182,39 @@ func (d *AsyncDistribution) Dist(data any) error {
 }
 
 func (d *AsyncDistribution) Close() error {
+	return nil
+}
+
+type RepeatDistribution struct {
+	lock  sync.RWMutex
+	dists []fission.Distribution
+}
+
+func NewRepeatDistribution() *RepeatDistribution {
+	return &RepeatDistribution{
+		dists: []fission.Distribution{},
+	}
+}
+
+func (d *RepeatDistribution) Add(dist fission.Distribution) error {
+	d.lock.Lock()
+	d.dists = append(d.dists, dist)
+	d.lock.Unlock()
+	return nil
+}
+
+func (d *RepeatDistribution) Dist(data any) error {
+	d.lock.RLock()
+	dists := make([]fission.Distribution, len(d.dists))
+	copy(dists, d.dists)
+	d.lock.RUnlock()
+	for _, dist := range dists {
+		dist.Dist(data)
+	}
+	return nil
+}
+
+func (d *RepeatDistribution) Close() error {
 	return nil
 }
 
