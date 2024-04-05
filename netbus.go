@@ -1,13 +1,13 @@
 package eventbus
 
 import (
+	"context"
 	"encoding/gob"
 	"fmt"
 	"log"
 	"net"
 	"net/rpc"
 	"net/url"
-	"sync"
 
 	"github.com/danielhookx/fission"
 )
@@ -18,12 +18,10 @@ type SubArgs struct {
 }
 
 type SubReply struct {
-	Handle uintptr
 }
 
 type UnsubArgs struct {
-	Topic  string
-	Handle uintptr
+	Topic string
 }
 
 type UnsubReply struct {
@@ -34,15 +32,12 @@ type PubArgs struct {
 	Data  any
 }
 
-type PubReply struct {
-}
+type PubReply struct{}
 
 type RPCProxy struct {
-	sync.Mutex
-	rawURL       string
-	remoteURL    string
-	bus          Eventbus
-	local2Remote map[uintptr]uintptr
+	rawURL    string
+	remoteURL string
+	bus       Eventbus
 }
 
 func NewRPCProxyCreator(rawURL, remoteURL string) ProxyCreator {
@@ -57,10 +52,9 @@ func NewRPCProxyCreator(rawURL, remoteURL string) ProxyCreator {
 
 func NewRPCProxy(rawURL, remoteURL string, bus Eventbus) (*RPCProxy, error) {
 	p := &RPCProxy{
-		rawURL:       rawURL,
-		remoteURL:    remoteURL,
-		bus:          bus,
-		local2Remote: make(map[uintptr]uintptr),
+		rawURL:    rawURL,
+		remoteURL: remoteURL,
+		bus:       bus,
 	}
 	gob.Register([]interface{}{})
 	rpc.Register(p)
@@ -109,9 +103,6 @@ func (p *RPCProxy) Subscribe(topic string, fn interface{}) error {
 	if err != nil {
 		return fmt.Errorf("Client invocation error: %w", err)
 	}
-	p.Lock()
-	p.local2Remote[functionWrapper(fn)] = reply.Handle
-	p.Unlock()
 	// Call the local subscription method and register the callback locally
 	return p.bus.Subscribe(topic, fn)
 }
@@ -135,22 +126,15 @@ func (p *RPCProxy) SubscribeSync(topic string, fn interface{}) error {
 	if err != nil {
 		return fmt.Errorf("Client invocation error: %w", err)
 	}
-	p.Lock()
-	p.local2Remote[functionWrapper(fn)] = reply.Handle
-	p.Unlock()
 	// Call the local subscription method and register the callback locally
 	return p.bus.SubscribeSync(topic, fn)
 }
 
-func (p *RPCProxy) SubscribeWith(topic string, key any, fn any, distHandler fission.CreateDistributionHandleFunc) error {
-	return p.bus.SubscribeWith(topic, key, fn, distHandler)
+func (p *RPCProxy) SubscribeWith(topic string, key any, distHandler fission.CreateDistributionHandleFunc) error {
+	return p.bus.SubscribeWith(topic, key, distHandler)
 }
 
 func (p *RPCProxy) Unsubscribe(topic string, handler interface{}) error {
-	p.Lock()
-	handle := p.local2Remote[functionWrapper(handler)]
-	p.Unlock()
-
 	// Call the remote unsubscription method to remove the event.
 	remote, err := url.Parse(p.remoteURL)
 	if err != nil {
@@ -163,43 +147,34 @@ func (p *RPCProxy) Unsubscribe(topic string, handler interface{}) error {
 
 	reply := &UnsubReply{}
 	err = client.Call("RPCProxy.RPCUnsubscribe", &UnsubArgs{
-		Topic:  topic,
-		Handle: handle,
+		Topic: topic,
 	}, &reply)
 	if err != nil {
 		return fmt.Errorf("Client invocation error: %w", err)
 	}
-
-	p.Lock()
-	delete(p.local2Remote, functionWrapper(handler))
-	p.Unlock()
 	// Call the local unsubscription method and remove the callback locally
 	return p.bus.Unsubscribe(topic, handler)
 }
 
 func (p *RPCProxy) Publish(topic string, args ...interface{}) {
-	p.bus.Publish(topic, args)
+	p.bus.Publish(topic, args...)
 }
 
 func (p *RPCProxy) RPCSubscribe(args *SubArgs, reply *SubReply) error {
 	// Receive subscription method calls from the peer
 	// callback method actually executes the remote call of Publish
-	cb := p.doSubscribeCallback(args)
-	reply.Handle = functionWrapper(cb)
-	return p.bus.SubscribeWith(args.Topic, reply.Handle, cb, CreateEventBusAsyncDist)
+	return p.bus.SubscribeWith(args.Topic, args.Topic, createNetPublishDist(args))
 }
 
 func (p *RPCProxy) RPCSubscribeSync(args *SubArgs, reply *SubReply) error {
 	// Receive subscription method calls from the peer
 	// callback method actually executes the remote call of Publish
-	cb := p.doSubscribeCallback(args)
-	reply.Handle = functionWrapper(cb)
-	p.bus.SubscribeWith(args.Topic, reply.Handle, cb, CreateEventBusAsyncDist)
+	p.bus.SubscribeWith(args.Topic, args.Topic, createNetPublishDist(args))
 	return nil
 }
 
 func (p *RPCProxy) RPCUnsubscribe(args *UnsubArgs, reply *UnsubReply) error {
-	p.bus.Unsubscribe(args.Topic, args.Handle)
+	p.bus.Unsubscribe(args.Topic, args.Topic)
 	return nil
 }
 
@@ -209,29 +184,51 @@ func (p *RPCProxy) RPCPublish(args *PubArgs, reply *PubReply) error {
 	return nil
 }
 
-type subscribeCallback func(data any) error
-
-func (p *RPCProxy) doSubscribeCallback(args *SubArgs) subscribeCallback {
-	return func(data any) error {
-		remote, err := url.Parse(args.RemoteURL)
-		if err != nil {
-			return fmt.Errorf("Parse remote url error: %w", err)
+func createNetPublishDist(args *SubArgs) fission.CreateDistributionHandleFunc {
+	return func(key any) fission.Distribution {
+		return &netPublishDist{
+			key:  key,
+			args: args,
 		}
-		client, err := rpc.Dial(remote.Scheme, parseAddress(remote))
-		if err != nil {
-			return fmt.Errorf("Client connection error %w", err)
-		}
-
-		reply := &PubReply{}
-		err = client.Call("RPCProxy.RPCPublish", &PubArgs{
-			Topic: args.Topic,
-			Data:  data,
-		}, &reply)
-		if err != nil {
-			return fmt.Errorf("Client invocation error: %w", err)
-		}
-		return nil
 	}
+}
+
+type netPublishDist struct {
+	key  any
+	args *SubArgs
+}
+
+func (d *netPublishDist) Register(ctx context.Context) {
+	return
+}
+
+func (d *netPublishDist) Key() any {
+	return d.key
+}
+
+func (d *netPublishDist) Dist(data any) error {
+	remote, err := url.Parse(d.args.RemoteURL)
+	if err != nil {
+		return fmt.Errorf("Parse remote url error: %w", err)
+	}
+	client, err := rpc.Dial(remote.Scheme, parseAddress(remote))
+	if err != nil {
+		return fmt.Errorf("Client connection error %w", err)
+	}
+
+	reply := &PubReply{}
+	err = client.Call("RPCProxy.RPCPublish", &PubArgs{
+		Topic: d.args.Topic,
+		Data:  data,
+	}, &reply)
+	if err != nil {
+		return fmt.Errorf("Client invocation error: %w", err)
+	}
+	return nil
+}
+
+func (d *netPublishDist) Close() error {
+	return nil
 }
 
 func parseAddress(u *url.URL) string {
