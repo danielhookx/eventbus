@@ -9,20 +9,11 @@ import (
 	"github.com/danielhookx/fission"
 )
 
-func Func(fn reflect.Value) context.Context {
-	return context.WithValue(context.Background(), "eventbus", fn)
-}
-
-func FromCtx(ctx context.Context) reflect.Value {
-	fn := ctx.Value("eventbus")
-	return fn.(reflect.Value)
-}
-
 type BusSubscriber interface {
 	Subscribe(topic string, fn interface{}) error
 	SubscribeSync(topic string, fn interface{}) error
-	Unsubscribe(topic string, handler interface{}) error
-	SubscribeWith(topic string, key any, fn any, distHandler fission.CreateDistributionHandleFunc) error
+	Unsubscribe(topic string, key any) error
+	SubscribeWith(topic string, key any, distHandler fission.CreateDistributionHandleFunc) error
 }
 
 type BusPublisher interface {
@@ -55,25 +46,6 @@ func NewEventBus(opt ...EventbusOption) Eventbus {
 	return bus
 }
 
-func CreateEventBusSyncDist(ctx context.Context, key any) fission.Distribution {
-	fn := FromCtx(ctx)
-	return NewSyncDistribution(fn)
-}
-
-func CreateEventBusAsyncDist(ctx context.Context, key any) fission.Distribution {
-	fn := FromCtx(ctx)
-	return NewAsyncDistribution(fn)
-}
-
-func CreateEventBusRepeatDist(ctx context.Context, key any) fission.Distribution {
-	return NewRepeatDistribution()
-}
-
-// Wrapper function that transforms a function into a comparable interface.
-func functionWrapper(f interface{}) uintptr {
-	return reflect.ValueOf(f).Pointer()
-}
-
 func (bus *EventBus) Subscribe(topic string, fn interface{}) error {
 	fnType := reflect.TypeOf(fn)
 	if !(fnType.Kind() == reflect.Func) {
@@ -81,12 +53,12 @@ func (bus *EventBus) Subscribe(topic string, fn interface{}) error {
 	}
 
 	handler := reflect.ValueOf(fn)
-	key := functionWrapper(fn)
+	key := handler.Pointer()
+
 	r := bus.cm.PutCenter(topic)
-	p := bus.dm.PutDistributor(Func(handler), key, CreateEventBusRepeatDist)
-	rd := p.(*RepeatDistribution)
-	rd.Add(NewAsyncDistribution(reflect.ValueOf(fn)))
-	r.AddDistributor(key, p)
+	p := bus.dm.PutDistributor(key, CreateEventBusRepeatDist)
+	p.Register(toDistCtx(NewAsyncDistribution(handler)))
+	r.AddDistributor(p)
 	return nil
 }
 
@@ -97,44 +69,37 @@ func (bus *EventBus) SubscribeSync(topic string, fn interface{}) error {
 	}
 
 	handler := reflect.ValueOf(fn)
-	key := functionWrapper(fn)
+	key := handler.Pointer()
+
 	r := bus.cm.PutCenter(topic)
-	p := bus.dm.PutDistributor(Func(handler), key, CreateEventBusRepeatDist)
-	rd := p.(*RepeatDistribution)
-	rd.Add(NewSyncDistribution(reflect.ValueOf(fn)))
-	r.AddDistributor(key, p)
+	p := bus.dm.PutDistributor(key, CreateEventBusRepeatDist)
+	p.Register(toDistCtx(NewSyncDistribution(handler)))
+	r.AddDistributor(p)
 	return nil
 }
 
-func (bus *EventBus) SubscribeWith(topic string, key any, fn any, distHandler fission.CreateDistributionHandleFunc) error {
-	fnType := reflect.TypeOf(fn)
-	if !(fnType.Kind() == reflect.Func) {
-		return fmt.Errorf("%s is not of type reflect.Func", fnType.Kind())
-	}
-
+func (bus *EventBus) SubscribeWith(topic string, key any, distHandler fission.CreateDistributionHandleFunc) error {
 	if key == nil {
 		return fmt.Errorf("key is nil")
 	}
 
 	r := bus.cm.PutCenter(topic)
-	p := bus.dm.PutDistributor(Func(reflect.ValueOf(fn)), key, distHandler)
-	r.AddDistributor(key, p)
+	p := bus.dm.PutDistributor(key, distHandler)
+	p.Register(nil)
+	r.AddDistributor(p)
 	return nil
 }
 
-func (bus *EventBus) Unsubscribe(topic string, handler interface{}) error {
-	fnType := reflect.TypeOf(handler)
+func (bus *EventBus) Unsubscribe(topic string, key any) error {
+	fnType := reflect.TypeOf(key)
 	if fnType.Kind() == reflect.Func {
 		r := bus.cm.PutCenter(topic)
-		r.DelDistributor(functionWrapper(handler))
+		r.DelDistributor(reflect.ValueOf(key).Pointer())
 		return nil
 	}
-	if fnType.Kind() == reflect.Uintptr {
-		r := bus.cm.PutCenter(topic)
-		r.DelDistributor(handler)
-		return nil
-	}
-	return fmt.Errorf("Unsubscribe invalid handler type %s", fnType.Kind())
+	r := bus.cm.PutCenter(topic)
+	r.DelDistributor(key)
+	return nil
 }
 
 func (bus *EventBus) Publish(topic string, args ...interface{}) {
@@ -151,6 +116,14 @@ func NewSyncDistribution(fn reflect.Value) *SyncDistribution {
 	return &SyncDistribution{
 		fn: fn,
 	}
+}
+
+func (d *SyncDistribution) Register(ctx context.Context) {
+	return
+}
+
+func (d *SyncDistribution) Key() any {
+	return d.fn.Pointer()
 }
 
 func (d *SyncDistribution) Dist(data any) error {
@@ -173,6 +146,14 @@ func NewAsyncDistribution(fn reflect.Value) *AsyncDistribution {
 	}
 }
 
+func (d *AsyncDistribution) Register(ctx context.Context) {
+	return
+}
+
+func (d *AsyncDistribution) Key() any {
+	return d.fn.Pointer()
+}
+
 func (d *AsyncDistribution) Dist(data any) error {
 	go func() {
 		passedArguments := setFuncArgs(d.fn, data.([]interface{}))
@@ -186,21 +167,27 @@ func (d *AsyncDistribution) Close() error {
 }
 
 type RepeatDistribution struct {
+	key   any
 	lock  sync.RWMutex
 	dists []fission.Distribution
 }
 
-func NewRepeatDistribution() *RepeatDistribution {
+func NewRepeatDistribution(key any) *RepeatDistribution {
 	return &RepeatDistribution{
+		key:   key,
 		dists: []fission.Distribution{},
 	}
 }
 
-func (d *RepeatDistribution) Add(dist fission.Distribution) error {
+func (d *RepeatDistribution) Register(ctx context.Context) {
 	d.lock.Lock()
+	dist := fromDistCtx(ctx)
 	d.dists = append(d.dists, dist)
 	d.lock.Unlock()
-	return nil
+}
+
+func (d *RepeatDistribution) Key() any {
+	return d.key
 }
 
 func (d *RepeatDistribution) Dist(data any) error {
@@ -216,6 +203,19 @@ func (d *RepeatDistribution) Dist(data any) error {
 
 func (d *RepeatDistribution) Close() error {
 	return nil
+}
+
+func toDistCtx(dist fission.Distribution) context.Context {
+	return context.WithValue(context.Background(), "eventbus", dist)
+}
+
+func fromDistCtx(ctx context.Context) fission.Distribution {
+	dist := ctx.Value("eventbus")
+	return dist.(fission.Distribution)
+}
+
+func CreateEventBusRepeatDist(key any) fission.Distribution {
+	return NewRepeatDistribution(key)
 }
 
 func setFuncArgs(fn reflect.Value, args []interface{}) []reflect.Value {
