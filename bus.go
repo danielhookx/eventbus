@@ -56,8 +56,8 @@ func (bus *EventBus) Subscribe(topic string, fn interface{}) error {
 	key := handler.Pointer()
 
 	r := bus.cm.PutCenter(topic)
-	p := bus.dm.PutDistributor(key, CreateEventBusRepeatDist)
-	p.Register(toDistCtx(NewAsyncDistribution(handler)))
+	p := bus.dm.PutDistributor(key, createEventBusRepeatDist)
+	p.Register(toDistCtx(newAsyncDistribution(handler)))
 	r.AddDistributor(p)
 	return nil
 }
@@ -72,8 +72,8 @@ func (bus *EventBus) SubscribeSync(topic string, fn interface{}) error {
 	key := handler.Pointer()
 
 	r := bus.cm.PutCenter(topic)
-	p := bus.dm.PutDistributor(key, CreateEventBusRepeatDist)
-	p.Register(toDistCtx(NewSyncDistribution(handler)))
+	p := bus.dm.PutDistributor(key, createEventBusRepeatDist)
+	p.Register(toDistCtx(newSyncDistribution(handler)))
 	r.AddDistributor(p)
 	return nil
 }
@@ -108,53 +108,53 @@ func (bus *EventBus) Publish(topic string, args ...interface{}) {
 	return
 }
 
-type SyncDistribution struct {
+type syncDistribution struct {
 	fn reflect.Value
 }
 
-func NewSyncDistribution(fn reflect.Value) *SyncDistribution {
-	return &SyncDistribution{
+func newSyncDistribution(fn reflect.Value) *syncDistribution {
+	return &syncDistribution{
 		fn: fn,
 	}
 }
 
-func (d *SyncDistribution) Register(ctx context.Context) {
+func (d *syncDistribution) Register(ctx context.Context) {
 	return
 }
 
-func (d *SyncDistribution) Key() any {
+func (d *syncDistribution) Key() any {
 	return d.fn.Pointer()
 }
 
-func (d *SyncDistribution) Dist(data any) error {
+func (d *syncDistribution) Dist(data any) error {
 	passedArguments := setFuncArgs(d.fn, data.([]interface{}))
 	d.fn.Call(passedArguments)
 	return nil
 }
 
-func (d *SyncDistribution) Close() error {
+func (d *syncDistribution) Close() error {
 	return nil
 }
 
-type AsyncDistribution struct {
+type asyncDistribution struct {
 	fn reflect.Value
 }
 
-func NewAsyncDistribution(fn reflect.Value) *AsyncDistribution {
-	return &AsyncDistribution{
+func newAsyncDistribution(fn reflect.Value) *asyncDistribution {
+	return &asyncDistribution{
 		fn: fn,
 	}
 }
 
-func (d *AsyncDistribution) Register(ctx context.Context) {
+func (d *asyncDistribution) Register(ctx context.Context) {
 	return
 }
 
-func (d *AsyncDistribution) Key() any {
+func (d *asyncDistribution) Key() any {
 	return d.fn.Pointer()
 }
 
-func (d *AsyncDistribution) Dist(data any) error {
+func (d *asyncDistribution) Dist(data any) error {
 	go func() {
 		passedArguments := setFuncArgs(d.fn, data.([]interface{}))
 		d.fn.Call(passedArguments)
@@ -162,35 +162,35 @@ func (d *AsyncDistribution) Dist(data any) error {
 	return nil
 }
 
-func (d *AsyncDistribution) Close() error {
+func (d *asyncDistribution) Close() error {
 	return nil
 }
 
-type RepeatDistribution struct {
+type repeatDistribution struct {
 	key   any
 	lock  sync.RWMutex
 	dists []fission.Distribution
 }
 
-func NewRepeatDistribution(key any) *RepeatDistribution {
-	return &RepeatDistribution{
+func newRepeatDistribution(key any) *repeatDistribution {
+	return &repeatDistribution{
 		key:   key,
 		dists: []fission.Distribution{},
 	}
 }
 
-func (d *RepeatDistribution) Register(ctx context.Context) {
+func (d *repeatDistribution) Register(ctx context.Context) {
 	d.lock.Lock()
 	dist := fromDistCtx(ctx)
 	d.dists = append(d.dists, dist)
 	d.lock.Unlock()
 }
 
-func (d *RepeatDistribution) Key() any {
+func (d *repeatDistribution) Key() any {
 	return d.key
 }
 
-func (d *RepeatDistribution) Dist(data any) error {
+func (d *repeatDistribution) Dist(data any) error {
 	d.lock.RLock()
 	dists := make([]fission.Distribution, len(d.dists))
 	copy(dists, d.dists)
@@ -201,7 +201,7 @@ func (d *RepeatDistribution) Dist(data any) error {
 	return nil
 }
 
-func (d *RepeatDistribution) Close() error {
+func (d *repeatDistribution) Close() error {
 	return nil
 }
 
@@ -214,8 +214,8 @@ func fromDistCtx(ctx context.Context) fission.Distribution {
 	return dist.(fission.Distribution)
 }
 
-func CreateEventBusRepeatDist(key any) fission.Distribution {
-	return NewRepeatDistribution(key)
+func createEventBusRepeatDist(key any) fission.Distribution {
+	return newRepeatDistribution(key)
 }
 
 func setFuncArgs(fn reflect.Value, args []interface{}) []reflect.Value {
