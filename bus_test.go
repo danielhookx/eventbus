@@ -1,10 +1,13 @@
 package eventbus
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/danielhookx/fission"
 )
 
 func a(name string) {
@@ -17,6 +20,30 @@ func b(name string) {
 
 func c(name string) {
 	fmt.Printf("sub3 -- %s\n", name)
+}
+
+type mockDist struct {
+	key string
+}
+
+func createMockDistHandlerFunc(key any) fission.Distribution {
+	return &mockDist{
+		key: key.(string),
+	}
+}
+
+func (m *mockDist) Register(ctx context.Context) {
+	return
+}
+func (m *mockDist) Key() any {
+	return m.key
+}
+func (m *mockDist) Dist(data any) error {
+	fmt.Printf("mock dist -- %s\n", data)
+	return nil
+}
+func (m *mockDist) Close() error {
+	return nil
 }
 
 func BenchmarkSubPub(b *testing.B) {
@@ -213,4 +240,46 @@ func TestSubscribeSyncParamIsolation(t *testing.T) {
 		v.name = "Jay"
 	})
 	e.Publish(topic, &s1)
+}
+
+func TestCallbackSubscribe(t *testing.T) {
+	e := NewEventBus()
+	topic := "testpub1"
+	var s1 = testA{
+		name: "jack",
+	}
+	e.SubscribeSync(topic, func(v *testA) {
+		fmt.Printf("sub1 -- %s\n", v.name)
+		e.SubscribeSync(topic, func(v *testA) {
+			fmt.Printf("sub2 -- %s\n", v.name)
+		})
+	})
+	e.Publish(topic, &s1)
+	e.Publish(topic, &s1)
+}
+
+func TestCallbackPublish(t *testing.T) {
+	e := NewEventBus()
+	topic := "testpub1"
+	topic2 := "testpub2"
+	var s1 = testA{
+		name: "jack",
+	}
+	e.SubscribeSync(topic, func(v *testA) {
+		fmt.Printf("sub1 -- %s: %s\n", topic, v.name)
+		e.Publish(topic2, &s1)
+	})
+	e.SubscribeSync(topic2, func(v *testA) {
+		fmt.Printf("sub2 -- %s: %s\n", topic2, v.name)
+	})
+	e.Publish(topic, &s1)
+}
+
+func TestSubscribeWith(t *testing.T) {
+	e := NewEventBus()
+	topic := "testpub1"
+	e.SubscribeWith(topic, "key1", createMockDistHandlerFunc)
+	e.SubscribeWith(topic, "key2", createMockDistHandlerFunc)
+	e.SubscribeWith(topic, "key3", createMockDistHandlerFunc)
+	e.Publish(topic, "jack")
 }
