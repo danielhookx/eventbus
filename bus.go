@@ -30,7 +30,7 @@ type EventBus struct {
 	dm *fission.DistributorManager
 }
 
-func NewEventBus(opt ...EventbusOption) Eventbus {
+func New(opt ...EventbusOption) Eventbus {
 	opts := eventbusOptions{}
 	for _, o := range opt {
 		o.apply(&opts)

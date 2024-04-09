@@ -47,7 +47,7 @@ func (m *mockDist) Close() error {
 }
 
 func BenchmarkSubPub(b *testing.B) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	b.RunParallel(func(pb *testing.PB) {
 		var wg sync.WaitGroup
@@ -72,7 +72,7 @@ func BenchmarkSubPub(b *testing.B) {
 }
 
 func BenchmarkSubPubSync(b *testing.B) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	b.RunParallel(func(pb *testing.PB) {
 		var wg sync.WaitGroup
@@ -96,7 +96,7 @@ func BenchmarkSubPubSync(b *testing.B) {
 	})
 }
 func TestNamedSubscribe(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	e.Subscribe(topic, a)
 	e.Subscribe(topic, b)
@@ -107,7 +107,7 @@ func TestNamedSubscribe(t *testing.T) {
 }
 
 func TestNamedSubscribeSync(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	e.SubscribeSync(topic, a)
 	e.SubscribeSync(topic, b)
@@ -118,7 +118,7 @@ func TestNamedSubscribeSync(t *testing.T) {
 }
 
 func TestAnonymousSubscribe(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	e.Subscribe(topic, func(name string) {
 		fmt.Printf("sub1 -- %s\n", name)
@@ -133,7 +133,7 @@ func TestAnonymousSubscribe(t *testing.T) {
 }
 
 func TestAnonymousSubscribeSync(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	e.SubscribeSync(topic, func(name string) {
 		fmt.Printf("sub1 -- %s\n", name)
@@ -148,7 +148,7 @@ func TestAnonymousSubscribeSync(t *testing.T) {
 }
 
 func TestBlockSubscribe(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	wg := sync.WaitGroup{}
 	wg.Add(3)
@@ -172,7 +172,7 @@ func TestBlockSubscribe(t *testing.T) {
 }
 
 func TestBlockSubscribeSync(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	e.SubscribeSync(topic, func(name string) {
 		fmt.Printf("sub1 -- %s\n", name)
@@ -195,7 +195,7 @@ type testA struct {
 }
 
 func TestSubscribeParamIsolation(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	var s1 = testA{
 		name: "jack",
@@ -222,7 +222,7 @@ func TestSubscribeParamIsolation(t *testing.T) {
 }
 
 func TestSubscribeSyncParamIsolation(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	var s1 = testA{
 		name: "jack",
@@ -243,7 +243,7 @@ func TestSubscribeSyncParamIsolation(t *testing.T) {
 }
 
 func TestCallbackSubscribe(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	var s1 = testA{
 		name: "jack",
@@ -259,7 +259,7 @@ func TestCallbackSubscribe(t *testing.T) {
 }
 
 func TestCallbackPublish(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	topic2 := "testpub2"
 	var s1 = testA{
@@ -276,7 +276,7 @@ func TestCallbackPublish(t *testing.T) {
 }
 
 func TestSubscribeWith(t *testing.T) {
-	e := NewEventBus()
+	e := New()
 	topic := "testpub1"
 	e.SubscribeWith(topic, "key1", createMockDistHandlerFunc)
 	e.SubscribeWith(topic, "key2", createMockDistHandlerFunc)
