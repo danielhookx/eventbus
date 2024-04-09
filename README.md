@@ -34,7 +34,6 @@ func calculator(a int, b int) {
 func main() {
     bus := eventbus.New()
     bus.Subscribe("calculator", calculator);
-
     bus.Publish("calculator", 10, 20);
 }
 ```
@@ -59,6 +58,7 @@ package main
 
 import (
 	"github.com/danielhookx/eventbus"
+	"github.com/danielhookx/fission"
 )
 
 type mockDist struct {
@@ -79,6 +79,7 @@ func (m *mockDist) Key() any {
 }
 func (m *mockDist) Dist(data any) error {
 	// add your code here
+	fmt.Println(data)
 	return nil
 }
 func (m *mockDist) Close() error {
@@ -86,9 +87,11 @@ func (m *mockDist) Close() error {
 }
 
 func main() {
+	topic := "main.test"
     bus := eventbus.New()
     bus.SubscribeWith(topic, "key1", createMockDistHandlerFunc)
     bus.Publish(topic, "jack")
+	bus.Unsubscribe(topic, "key1")
 }
 ```
 
@@ -107,9 +110,13 @@ func main() {
 	rawURL := "tcp://:7633"
 	remoteURL := "tcp://localhost:7634"
 
-	bus := eventbus.NewEventBus(eventbus.WithProxys(eventbus.NewRPCProxyCreator(rawURL, remoteURL)))
-
-    bus.Publish(topic, "jack")
+	bus := eventbus.New(
+		eventbus.WithProxys(
+			eventbus.NewRPCProxyCreator(rawURL, remoteURL),
+		),
+	)
+	
+    bus.Publish("test", "jack")
 }
 ```
 
@@ -125,10 +132,13 @@ func main() {
 	rawURL := "tcp://:7634"
 	remoteURL := "tcp://localhost:7633"
 
-	bus := eventbus.NewEventBus(eventbus.WithProxys(eventbus.NewRPCProxyCreator(rawURL, remoteURL)))
+	bus := eventbus.New(
+		eventbus.WithProxys(
+			eventbus.NewRPCProxyCreator(rawURL, remoteURL),
+		),
+	)
 
-
-    bus.Subscribe(topic, func(name string) {
+    bus.Subscribe("test", func(name string) {
 	    fmt.Printf("hello %s\n", name)
     })
 }
