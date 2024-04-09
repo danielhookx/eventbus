@@ -24,7 +24,7 @@ func main() {
 	rawURL := "tcp://:7634"
 	remoteURL := "tcp://localhost:7633"
 
-	bus := eventbus.NewEventBus(eventbus.WithProxys(eventbus.NewRPCProxyCreator(rawURL, remoteURL)))
+	bus := eventbus.New(eventbus.WithProxys(eventbus.NewRPCProxyCreator(rawURL, remoteURL)))
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Note: All input ends with `Enter`, type `exit` return to upper level")
